@@ -132,9 +132,3 @@ You can restrict which IP addresses are allowed to call the agent API from the *
 ## Live Logs
 
 When you open the **Logs** tab for a container on an agent host, TagWatcher opens a WebSocket and requests log streaming from the agent. The agent starts pushing log chunks every 5 seconds for up to 10 minutes.
-
----
-
-## License
-
-Private
