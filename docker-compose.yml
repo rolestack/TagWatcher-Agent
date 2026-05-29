@@ -1,0 +1,12 @@
+services:
+  tagwatcher-agent:
+    image: tagwatcher-agent:latest
+    build: .
+    restart: unless-stopped
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - tagwatcher-agent-data:/data
+    env_file: .env
+
+volumes:
+  tagwatcher-agent-data:
