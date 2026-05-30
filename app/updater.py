@@ -1,8 +1,15 @@
 """Container update logic — mirrors TagWatcher's docker_service recreate helpers."""
 import logging
+import os
+import re
 import subprocess
 
 import docker
+
+_SAFE_SERVICE_RE = re.compile(r'^[a-zA-Z0-9][a-zA-Z0-9_.\-]{0,127}$')
+_SAFE_IMAGE_RE = re.compile(
+    r'^[a-zA-Z0-9]([a-zA-Z0-9_.\-/:@]{0,254}[a-zA-Z0-9])?$'
+)
 
 logger = logging.getLogger(__name__)
 
@@ -134,6 +141,9 @@ def apply_update(container_id: str, new_image: str) -> tuple[bool, str]:
 
     Returns (success, error_message).
     """
+    if not _SAFE_IMAGE_RE.match(new_image):
+        return False, f"Rejected unsafe image reference: {new_image!r}"
+
     client = docker.from_env()
     try:
         container = client.containers.get(container_id)
@@ -159,6 +169,25 @@ def apply_update(container_id: str, new_image: str) -> tuple[bool, str]:
         client.close()
 
 
+def _validate_working_dir(path: str) -> str:
+    """working_dir must be absolute (Docker Compose always sets it as such)."""
+    if not os.path.isabs(path):
+        raise RuntimeError(f"Unsafe compose working_dir: must be absolute, got {path!r}")
+    resolved = os.path.normpath(path)
+    if ".." in resolved.split(os.sep):
+        raise RuntimeError(f"Unsafe compose working_dir: path traversal detected in {path!r}")
+    return resolved
+
+
+def _validate_config_file(path: str) -> str:
+    """Config files may be relative (resolved by docker compose against working_dir).
+    Reject any path containing traversal sequences."""
+    normalized = os.path.normpath(path)
+    if ".." in normalized.split(os.sep):
+        raise RuntimeError(f"Unsafe compose config_file: path traversal detected in {path!r}")
+    return path
+
+
 def _compose_update(client, target, new_image: str) -> None:
     """Use `docker compose up -d` so all compose-managed settings (devices, sysctls,
     capabilities, etc.) are preserved exactly as defined in the compose file."""
@@ -173,9 +202,14 @@ def _compose_update(client, target, new_image: str) -> None:
             f"working_dir={working_dir!r}, service={service!r}"
         )
 
+    if not _SAFE_SERVICE_RE.match(service):
+        raise RuntimeError(f"Unsafe compose service name: {service!r}")
+
+    working_dir = _validate_working_dir(working_dir)
+
     cmd = ["docker", "compose"]
     for f in (f.strip() for f in config_files.split(",") if f.strip()):
-        cmd += ["-f", f]
+        cmd += ["-f", _validate_config_file(f)]
     cmd += ["up", "-d", "--pull", "always", service]
 
     logger.info(f"Running: {' '.join(cmd)} (cwd={working_dir})")

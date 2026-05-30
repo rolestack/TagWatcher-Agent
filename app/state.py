@@ -21,4 +21,5 @@ def load() -> dict | None:
 def save(data: dict) -> None:
     _STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
     _STATE_FILE.write_text(json.dumps(data, indent=2))
+    _STATE_FILE.chmod(0o600)  # owner-only; secret must not be world-readable
     logger.debug(f"State saved to {_STATE_FILE}")
