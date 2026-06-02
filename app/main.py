@@ -6,7 +6,7 @@ import time
 import httpx
 
 from app.config import settings
-from app.docker_reader import list_containers
+from app.runtime_detector import detect_runtime
 from app.log_streamer import push_log_chunks
 from app.registration import get_agent_secret
 from app.updater import apply_update
@@ -57,11 +57,17 @@ def _log_stream_worker(agent_secret: str, container_ids: list[str]) -> None:
             _active_log_streams.difference_update(container_ids)
 
 
-def _push_sync(agent_secret: str) -> None:
+def _push_sync(agent_secret: str, runtime_type: str, runtime_metadata: str) -> None:
+    # Select appropriate reader based on runtime
+    if runtime_type == "kubernetes":
+        from app.kubernetes_reader import list_containers
+    else:
+        from app.docker_reader import list_containers
+
     try:
         containers = list_containers()
     except Exception as e:
-        logger.error(f"Failed to read containers from Docker socket: {e}")
+        logger.error(f"Failed to read containers from {runtime_type}: {e}")
         return
 
     with _update_results_lock:
@@ -72,6 +78,8 @@ def _push_sync(agent_secret: str) -> None:
         "containers": [c.model_dump() for c in containers],
         "hostname": settings.AGENT_HOSTNAME or socket.gethostname(),
         "agent_version": AGENT_VERSION,
+        "runtime_type": runtime_type,
+        "runtime_metadata": runtime_metadata,
         "update_results": flushed_results,
     }
     url = settings.TAGWATCHER_URL.rstrip("/") + "/api/agent/sync"
@@ -119,10 +127,14 @@ def _push_sync(agent_secret: str) -> None:
 def main() -> None:
     agent_secret = get_agent_secret()
     interval = settings.SYNC_INTERVAL_SECONDS
-    logger.info(f"TagWatcher Agent {AGENT_VERSION} started — syncing every {interval}s")
+
+    # Detect runtime once at startup
+    runtime_type, runtime_metadata = detect_runtime()
+
+    logger.info(f"TagWatcher Agent {AGENT_VERSION} started (runtime: {runtime_type}) — syncing every {interval}s")
 
     while True:
-        _push_sync(agent_secret)
+        _push_sync(agent_secret, runtime_type, runtime_metadata)
         time.sleep(interval)
 
 
