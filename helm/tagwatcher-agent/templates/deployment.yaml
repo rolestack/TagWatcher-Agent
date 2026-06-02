@@ -1,0 +1,71 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "tagwatcher-agent.name" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: {{ include "tagwatcher-agent.name" . }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: {{ include "tagwatcher-agent.name" . }}
+  template:
+    metadata:
+      labels:
+        app: {{ include "tagwatcher-agent.name" . }}
+    spec:
+      serviceAccountName: {{ include "tagwatcher-agent.serviceAccountName" . }}
+      containers:
+        - name: agent
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          env:
+            - name: TAGWATCHER_URL
+              value: {{ required "tagwatcher.url is required" .Values.tagwatcher.url | quote }}
+            - name: REGISTRATION_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "tagwatcher-agent.name" . }}
+                  key: registrationToken
+                  optional: true
+            - name: AGENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "tagwatcher-agent.name" . }}
+                  key: agentSecret
+                  optional: true
+            - name: SYNC_INTERVAL_SECONDS
+              value: {{ .Values.tagwatcher.syncIntervalSeconds | quote }}
+            - name: LOG_LEVEL
+              value: {{ .Values.tagwatcher.logLevel | quote }}
+            - name: TLS_VERIFY
+              value: {{ .Values.tagwatcher.tlsVerify | quote }}
+            - name: K8S_CLUSTER_WIDE
+              value: {{ .Values.kubernetes.clusterWide | quote }}
+            {{- if .Values.kubernetes.namespace }}
+            - name: K8S_NAMESPACE
+              value: {{ .Values.kubernetes.namespace | quote }}
+            {{- end }}
+            {{- if .Values.kubernetes.labelSelector }}
+            - name: K8S_LABEL_SELECTOR
+              value: {{ .Values.kubernetes.labelSelector | quote }}
+            {{- end }}
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

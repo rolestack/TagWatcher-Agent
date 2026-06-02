@@ -1,0 +1,6 @@
+apiVersion: v2
+name: tagwatcher-agent
+description: TagWatcher Agent for Kubernetes container monitoring
+type: application
+version: 0.1.0
+appVersion: "1.0.0"

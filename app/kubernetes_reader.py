@@ -24,35 +24,45 @@ def _extract_digest(image_id: str) -> str | None:
 
 def list_containers() -> list[ContainerInfo]:
     """
-    List all containers in the current Kubernetes namespace.
+    List containers from Kubernetes.
 
-    Uses in-cluster configuration (service account token).
+    Behavior is controlled by environment variables (set via Helm values):
+    - K8S_CLUSTER_WIDE=true (default): scan all namespaces cluster-wide
+    - K8S_CLUSTER_WIDE=false + K8S_NAMESPACE: scan a specific namespace only
+    - K8S_LABEL_SELECTOR: optional label filter (e.g. "app=myapp")
     """
     try:
-        # Load in-cluster config (works when running inside a pod)
         config.load_incluster_config()
     except config.ConfigException:
         logger.warning("Failed to load in-cluster config, falling back to kubeconfig")
         config.load_kube_config()
 
     v1 = client.CoreV1Api()
-    namespace = os.getenv("POD_NAMESPACE", "default")
+    cluster_wide = os.getenv("K8S_CLUSTER_WIDE", "true").lower() != "false"
+    namespace = os.getenv("K8S_NAMESPACE", "")
+    label_selector = os.getenv("K8S_LABEL_SELECTOR", "") or None
 
-    # Get label selector from environment (optional filtering)
-    label_selector = os.getenv("K8S_LABEL_SELECTOR", "")
+    kwargs = {}
+    if label_selector:
+        kwargs["label_selector"] = label_selector
 
     try:
-        if label_selector:
-            pods = v1.list_namespaced_pod(namespace, label_selector=label_selector)
+        if cluster_wide:
+            pods = v1.list_pod_for_all_namespaces(**kwargs)
+            logger.debug(f"Listed pods cluster-wide (label_selector={label_selector})")
         else:
-            pods = v1.list_namespaced_pod(namespace)
+            ns = namespace or "default"
+            pods = v1.list_namespaced_pod(ns, **kwargs)
+            logger.debug(f"Listed pods in namespace={ns} (label_selector={label_selector})")
     except Exception as e:
-        logger.error(f"Failed to list pods in namespace {namespace}: {e}")
+        scope = "cluster-wide" if cluster_wide else f"namespace={namespace}"
+        logger.error(f"Failed to list pods ({scope}): {e}")
         return []
 
     result = []
     for pod in pods.items:
         pod_name = pod.metadata.name
+        pod_namespace = pod.metadata.namespace or namespace
         for container_status in (pod.status.container_statuses or []):
             container_name = container_status.name
             image_ref = container_status.image
@@ -61,7 +71,6 @@ def list_containers() -> list[ContainerInfo]:
             image_name, tag = _split_image_ref(image_ref)
             digest = _extract_digest(image_id)
 
-            # Container status: running, waiting, terminated
             if container_status.state.running:
                 status = "running"
             elif container_status.state.waiting:
@@ -71,12 +80,11 @@ def list_containers() -> list[ContainerInfo]:
             else:
                 status = "unknown"
 
-            # Use pod_name + container_name as unique ID
-            container_id = f"{pod_name}_{container_name}"
+            container_id = f"{pod_namespace}_{pod_name}_{container_name}"
 
             result.append(ContainerInfo(
                 container_id=container_id,
-                name=f"{pod_name}/{container_name}",
+                name=f"{pod_namespace}/{pod_name}/{container_name}",
                 image=image_name,
                 tag=tag,
                 digest=digest,

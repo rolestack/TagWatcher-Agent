@@ -1,0 +1,34 @@
+image:
+  repository: ghcr.io/rolestack/tagwatcher-agent
+  pullPolicy: Always
+  tag: "latest"
+
+tagwatcher:
+  url: ""
+  registrationToken: ""
+  syncIntervalSeconds: 30
+  logLevel: INFO
+  tlsVerify: true
+
+kubernetes:
+  # true: scan all namespaces cluster-wide (requires ClusterRole)
+  # false: scan only the specified namespace (uses Role)
+  clusterWide: true
+  namespace: ""
+  labelSelector: ""
+
+clusterRole:
+  create: true
+  name: ""
+
+serviceAccount:
+  create: true
+  name: ""
+
+resources: {}
+
+nodeSelector: {}
+
+tolerations: []
+
+affinity: {}
