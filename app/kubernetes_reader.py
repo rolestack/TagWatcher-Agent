@@ -39,30 +39,41 @@ def list_containers() -> list[ContainerInfo]:
 
     v1 = client.CoreV1Api()
     cluster_wide = os.getenv("K8S_CLUSTER_WIDE", "true").lower() != "false"
-    namespace = os.getenv("K8S_NAMESPACE", "")
+    namespaces_raw = os.getenv("K8S_NAMESPACES", "")
+    namespaces = [ns.strip() for ns in namespaces_raw.split(",") if ns.strip()] if namespaces_raw else []
     label_selector = os.getenv("K8S_LABEL_SELECTOR", "") or None
 
     kwargs = {}
     if label_selector:
         kwargs["label_selector"] = label_selector
 
+    all_pods = []
     try:
-        if cluster_wide:
-            pods = v1.list_pod_for_all_namespaces(**kwargs)
+        if cluster_wide and not namespaces:
+            # Scan entire cluster
+            resp = v1.list_pod_for_all_namespaces(**kwargs)
+            all_pods = resp.items
             logger.debug(f"Listed pods cluster-wide (label_selector={label_selector})")
+        elif namespaces:
+            # Scan specific namespaces
+            for ns in namespaces:
+                resp = v1.list_namespaced_pod(ns, **kwargs)
+                all_pods.extend(resp.items)
+            logger.debug(f"Listed pods in namespaces={namespaces} (label_selector={label_selector})")
         else:
-            ns = namespace or "default"
-            pods = v1.list_namespaced_pod(ns, **kwargs)
+            # Scan release namespace only
+            ns = os.getenv("POD_NAMESPACE", "default")
+            resp = v1.list_namespaced_pod(ns, **kwargs)
+            all_pods = resp.items
             logger.debug(f"Listed pods in namespace={ns} (label_selector={label_selector})")
     except Exception as e:
-        scope = "cluster-wide" if cluster_wide else f"namespace={namespace}"
-        logger.error(f"Failed to list pods ({scope}): {e}")
+        logger.error(f"Failed to list pods: {e}")
         return []
 
     result = []
-    for pod in pods.items:
+    for pod in all_pods:
         pod_name = pod.metadata.name
-        pod_namespace = pod.metadata.namespace or namespace
+        pod_namespace = pod.metadata.namespace
         for container_status in (pod.status.container_statuses or []):
             container_name = container_status.name
             image_ref = container_status.image

@@ -29,8 +29,12 @@ _update_results: list[dict] = []
 _update_results_lock = threading.Lock()
 
 
-def _apply_and_record(container_id: str, new_image: str, container_name: str) -> None:
-    success, error = apply_update(container_id, new_image)
+def _apply_and_record(container_id: str, new_image: str, container_name: str, runtime_type: str) -> None:
+    if runtime_type == "kubernetes":
+        from app.kubernetes_updater import apply_update as k8s_apply_update
+        success, error = k8s_apply_update(container_id, new_image)
+    else:
+        success, error = apply_update(container_id, new_image)
     with _update_results_lock:
         _update_results.append({
             "container_id": container_id,
@@ -101,7 +105,7 @@ def _push_sync(agent_secret: str, runtime_type: str, runtime_metadata: str) -> N
             logger.info(f"Applying update: {item['container_name']} → {item['new_image']}")
             threading.Thread(
                 target=_apply_and_record,
-                args=(item["container_id"], item["new_image"], item["container_name"]),
+                args=(item["container_id"], item["new_image"], item["container_name"], runtime_type),
                 daemon=True,
             ).start()
 

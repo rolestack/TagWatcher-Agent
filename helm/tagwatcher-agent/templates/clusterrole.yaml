@@ -6,9 +6,18 @@ metadata:
   labels:
     app: {{ include "tagwatcher-agent.name" . }}
 rules:
+  # Read pod info and logs for container monitoring
   - apiGroups: [""]
-    resources: ["pods", "pods/log", "namespaces"]
+    resources: ["pods", "pods/log"]
     verbs: ["get", "list", "watch"]
+  # Trace Pod → ReplicaSet → Deployment ownership chain
+  - apiGroups: ["apps"]
+    resources: ["replicasets"]
+    verbs: ["get"]
+  # Patch workload image and force rollout restart for image upgrades
+  - apiGroups: ["apps"]
+    resources: ["deployments", "statefulsets", "daemonsets"]
+    verbs: ["get", "list", "patch"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
@@ -25,31 +34,47 @@ subjects:
     name: {{ include "tagwatcher-agent.serviceAccountName" . }}
     namespace: {{ .Release.Namespace }}
 {{- else if .Values.clusterRole.create }}
+{{- $namespaces := .Values.kubernetes.namespaces }}
+{{- if not $namespaces }}
+{{- $namespaces = list .Release.Namespace }}
+{{- end }}
+{{- range $namespaces }}
+---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
-  name: {{ include "tagwatcher-agent.clusterRoleName" . }}
-  namespace: {{ default .Release.Namespace .Values.kubernetes.namespace }}
+  name: {{ include "tagwatcher-agent.clusterRoleName" $ }}
+  namespace: {{ . }}
   labels:
-    app: {{ include "tagwatcher-agent.name" . }}
+    app: {{ include "tagwatcher-agent.name" $ }}
 rules:
+  # Read pod info and logs for container monitoring
   - apiGroups: [""]
     resources: ["pods", "pods/log"]
     verbs: ["get", "list", "watch"]
+  # Trace Pod → ReplicaSet → Deployment ownership chain
+  - apiGroups: ["apps"]
+    resources: ["replicasets"]
+    verbs: ["get"]
+  # Patch workload image and force rollout restart for image upgrades
+  - apiGroups: ["apps"]
+    resources: ["deployments", "statefulsets", "daemonsets"]
+    verbs: ["get", "list", "patch"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
-  name: {{ include "tagwatcher-agent.clusterRoleName" . }}
-  namespace: {{ default .Release.Namespace .Values.kubernetes.namespace }}
+  name: {{ include "tagwatcher-agent.clusterRoleName" $ }}
+  namespace: {{ . }}
   labels:
-    app: {{ include "tagwatcher-agent.name" . }}
+    app: {{ include "tagwatcher-agent.name" $ }}
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
-  name: {{ include "tagwatcher-agent.clusterRoleName" . }}
+  name: {{ include "tagwatcher-agent.clusterRoleName" $ }}
 subjects:
   - kind: ServiceAccount
-    name: {{ include "tagwatcher-agent.serviceAccountName" . }}
-    namespace: {{ .Release.Namespace }}
+    name: {{ include "tagwatcher-agent.serviceAccountName" $ }}
+    namespace: {{ $.Release.Namespace }}
+{{- end }}
 {{- end }}

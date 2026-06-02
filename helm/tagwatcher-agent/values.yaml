@@ -1,34 +1,133 @@
+# -- Container image settings
 image:
   repository: ghcr.io/rolestack/tagwatcher-agent
   pullPolicy: Always
+  # Override the image tag (defaults to "latest")
   tag: "latest"
 
+# -- TagWatcher server connection settings
 tagwatcher:
+  # URL of the TagWatcher server (required)
+  # Example: https://watcher.example.com
   url: ""
-  registrationToken: ""
+
+  # How often the agent syncs container data to the server (in seconds)
   syncIntervalSeconds: 30
+
+  # Log level: DEBUG, INFO, WARNING, ERROR
   logLevel: INFO
+
+  # Verify TLS certificate of the TagWatcher server.
+  # Set to false only for self-signed certificates in development.
   tlsVerify: true
 
+# -- Secret settings for agent credentials
+secret:
+  # Whether an existing Secret is used (true) or the chart creates one (false).
+  #
+  # create=true  — You have already created the Secret manually.
+  #               Must set secret.name to the name of that existing Secret.
+  #               The Secret must contain the key 'registrationToken'.
+  #
+  #   Example — create the secret beforehand:
+  #     kubectl create secret generic my-tagwatcher-secret \
+  #       --from-literal=registrationToken=<token>
+  #     Then install with: --set secret.create=true --set secret.name=my-tagwatcher-secret
+  #
+  # create=false — The chart creates the Secret automatically.
+  #               Set secret.registrationToken to the token value.
+  #               Intended as a quick-start option; avoid committing the token to VCS.
+  #
+  #   Example:
+  #     helm install tagwatcher-agent ./helm/tagwatcher-agent \
+  #       --set secret.registrationToken=<token>
+  create: false
+
+  # Name of the existing Secret (required when create=true).
+  # Ignored when create=false; the secret is named after the release.
+  name: ""
+
+  # Registration token from the TagWatcher web UI (used when create=false).
+  # Do not commit this value — pass it via --set at install time.
+  registrationToken: ""
+
+# -- Kubernetes discovery settings
 kubernetes:
-  # true: scan all namespaces cluster-wide (requires ClusterRole)
-  # false: scan only the specified namespace (uses Role)
+  # Scan containers across all namespaces cluster-wide.
+  # Requires ClusterRole — a ClusterRole and ClusterRoleBinding will be created automatically.
+  # Set to false to restrict scanning to the release namespace only (uses Role/RoleBinding instead).
+  #
+  # Examples:
+  #
+  # Scan entire cluster (default):
+  #   clusterWide: true
+  #   namespaces: []
+  #
+  # Scan specific namespaces only (agent-side filter, still uses ClusterRole):
+  # NOTE: Even with a namespace filter, clusterWide=true still creates a ClusterRole.
+  # The namespace list is applied by the agent, not enforced at the RBAC level.
+  #   clusterWide: true
+  #   namespaces:
+  #     - production
+  #     - staging
+  #
+  # Restrict to a single namespace with minimal RBAC (uses Role/RoleBinding):
+  #   clusterWide: false
+  #   namespaces:
+  #     - production
   clusterWide: true
-  namespace: ""
+
+  # List of namespaces to scan. Leave empty to scan all namespaces (when clusterWide=true)
+  # or only the release namespace (when clusterWide=false).
+  namespaces: []
+
+  # Optional Kubernetes label selector to filter pods.
+  # Example: "app=myapp,env=production"
+  # Leave empty to discover all pods in scope.
   labelSelector: ""
 
+# -- RBAC settings
 clusterRole:
+  # Create the ClusterRole (or Role when clusterWide=false) and its binding.
+  # Set to false if you manage RBAC externally.
+  #
+  # Permissions granted:
+  #   pods, pods/log       — get/list/watch  (container monitoring)
+  #   replicasets          — get             (trace Pod → ReplicaSet → Deployment)
+  #   deployments,
+  #   statefulsets,
+  #   daemonsets           — get/list/patch  (image upgrade + rollout restart)
   create: true
+
+  # Override the name of the ClusterRole/Role.
+  # Defaults to the release name.
   name: ""
 
+# -- ServiceAccount settings
 serviceAccount:
+  # Create a dedicated ServiceAccount for the agent.
+  # Set to false to use an existing ServiceAccount.
   create: true
+
+  # Override the ServiceAccount name.
+  # Defaults to the release name.
   name: ""
 
+# -- Resource requests and limits for the agent container
+# Example:
+#   requests:
+#     cpu: 50m
+#     memory: 64Mi
+#   limits:
+#     cpu: 200m
+#     memory: 128Mi
 resources: {}
 
+# -- Node selector for pod scheduling
 nodeSelector: {}
 
+# -- Tolerations for pod scheduling
 tolerations: []
 
+# -- Affinity rules for pod scheduling
 affinity: {}
