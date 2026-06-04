@@ -6,14 +6,17 @@ metadata:
   labels:
     app: {{ include "tagwatcher-agent.name" . }}
 rules:
-  # Read pod info and logs for container monitoring
+  # Read pod info/logs; patch a bare Pod's image for in-place updates
   - apiGroups: [""]
-    resources: ["pods", "pods/log"]
-    verbs: ["get", "list", "watch"]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch", "patch"]
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    verbs: ["get"]
   # Trace Pod → ReplicaSet → Deployment ownership chain
   - apiGroups: ["apps"]
     resources: ["replicasets"]
-    verbs: ["get"]
+    verbs: ["get", "list"]
   # Patch workload image and force rollout restart for image upgrades
   - apiGroups: ["apps"]
     resources: ["deployments", "statefulsets", "daemonsets"]
@@ -48,14 +51,17 @@ metadata:
   labels:
     app: {{ include "tagwatcher-agent.name" $ }}
 rules:
-  # Read pod info and logs for container monitoring
+  # Read pod info/logs; patch a bare Pod's image for in-place updates
   - apiGroups: [""]
-    resources: ["pods", "pods/log"]
-    verbs: ["get", "list", "watch"]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch", "patch"]
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    verbs: ["get"]
   # Trace Pod → ReplicaSet → Deployment ownership chain
   - apiGroups: ["apps"]
     resources: ["replicasets"]
-    verbs: ["get"]
+    verbs: ["get", "list"]
   # Patch workload image and force rollout restart for image upgrades
   - apiGroups: ["apps"]
     resources: ["deployments", "statefulsets", "daemonsets"]

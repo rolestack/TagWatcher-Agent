@@ -16,44 +16,41 @@ def _load_config() -> None:
         config.load_kube_config()
 
 
-def _find_owner(v1, apps_v1, namespace: str, pod_name: str) -> tuple[str, str]:
+def _parse_container_id(container_id: str) -> tuple[str, str, str, str]:
     """
-    Trace pod ownerReferences to find the root workload.
-    Returns (kind, name): Deployment, StatefulSet, or DaemonSet.
+    Parse a container_id produced by kubernetes_reader into its parts.
+
+    Format: {namespace}_{kind}_{workload}_{container}
+    Since namespace/kind/container names cannot contain '_', and the workload
+    name is the only field that could (rare, but possible via generateName edge
+    cases), we split the fixed fields from the ends and treat the middle as the
+    workload name.
     """
-    pod = v1.read_namespaced_pod(pod_name, namespace)
-
-    for ref in (pod.metadata.owner_references or []):
-        if ref.kind == "ReplicaSet":
-            rs = apps_v1.read_namespaced_replica_set(ref.name, namespace)
-            for rs_ref in (rs.metadata.owner_references or []):
-                if rs_ref.kind == "Deployment":
-                    return "Deployment", rs_ref.name
-            return "ReplicaSet", ref.name
-        if ref.kind in ("StatefulSet", "DaemonSet"):
-            return ref.kind, ref.name
-
-    raise ValueError(f"No supported workload owner found for pod '{pod_name}'")
+    parts = container_id.split("_")
+    if len(parts) < 4:
+        raise ValueError(f"Invalid container_id format: {container_id}")
+    namespace = parts[0]
+    kind = parts[1]
+    container_name = parts[-1]
+    workload = "_".join(parts[2:-1])
+    return namespace, kind, workload, container_name
 
 
-def _patch_image(apps_v1, namespace: str, kind: str, name: str, container_name: str, new_image: str) -> None:
-    patch = {
-        "spec": {
-            "template": {
-                "spec": {
-                    "containers": [{"name": container_name, "image": new_image}]
-                }
-            }
-        }
-    }
+def _patch_image(apps_v1, v1, namespace: str, kind: str, name: str, container_name: str, new_image: str) -> None:
+    container_patch = {"name": container_name, "image": new_image}
+    if kind == "Pod":
+        # Bare Pod has no template; patch the container image directly.
+        # kubelet restarts the container in place with the new image.
+        v1.patch_namespaced_pod(name, namespace, {"spec": {"containers": [container_patch]}})
+        return
+
+    patch = {"spec": {"template": {"spec": {"containers": [container_patch]}}}}
     if kind == "Deployment":
         apps_v1.patch_namespaced_deployment(name, namespace, patch)
     elif kind == "StatefulSet":
         apps_v1.patch_namespaced_stateful_set(name, namespace, patch)
     elif kind == "DaemonSet":
         apps_v1.patch_namespaced_daemon_set(name, namespace, patch)
-    elif kind == "ReplicaSet":
-        apps_v1.patch_namespaced_replica_set(name, namespace, patch)
     else:
         raise ValueError(f"Unsupported workload kind: {kind}")
 
@@ -84,33 +81,40 @@ def apply_update(container_id: str, new_image: str) -> tuple[bool, str]:
     """
     Update a Kubernetes container image by patching the owning workload.
 
-    container_id format: {namespace}_{pod_name}_{container_name}
+    container_id format: {namespace}_{kind}_{workload}_{container_name}
 
-    For versioned tags (e.g. 1.0.0 → 1.1.0): patches the image in the workload spec.
-    For fixed tags (latest, stable, etc.): patches the image AND forces a rollout
-    restart so Kubernetes re-pulls the image even if the tag name hasn't changed.
+    The kind and workload are encoded in the container_id by kubernetes_reader,
+    so no live ownerReference lookup is needed.
+
+    If new_image pins a digest (repo:tag@sha256:...), the spec changes and the
+    controller rolls automatically. Otherwise, a fixed tag (latest, etc.) needs a
+    rollout restart to force a re-pull. Bare Pods are patched in place by kubelet.
     """
-    parts = container_id.split("_", 2)
-    if len(parts) != 3:
-        return False, f"Invalid container_id format: {container_id}"
+    try:
+        namespace, kind, workload_name, container_name = _parse_container_id(container_id)
+    except ValueError as e:
+        return False, str(e)
 
-    namespace, pod_name, container_name = parts
+    if kind not in ("Deployment", "StatefulSet", "DaemonSet", "Pod"):
+        return False, f"Updates are not supported for workload kind '{kind}'"
 
     try:
         _load_config()
-        v1 = client.CoreV1Api()
         apps_v1 = client.AppsV1Api()
+        v1 = client.CoreV1Api()
 
-        kind, workload_name = _find_owner(v1, apps_v1, namespace, pod_name)
         logger.info(f"Updating {kind}/{workload_name} [{container_name}] → {new_image}")
+        _patch_image(apps_v1, v1, namespace, kind, workload_name, container_name, new_image)
 
-        _patch_image(apps_v1, namespace, kind, workload_name, container_name, new_image)
-
-        # Fixed tags require a rollout restart to force re-pull
-        tag = new_image.rsplit(":", 1)[-1] if ":" in new_image else "latest"
-        if tag in _FIXED_TAGS:
-            logger.info(f"Fixed tag '{tag}' detected — forcing rollout restart")
-            _rollout_restart(apps_v1, namespace, kind, workload_name)
+        # A pinned digest already changed the spec → rollout is automatic.
+        # Without a digest, a fixed tag needs an explicit rollout restart.
+        # (Pod has no template, so it can't be rollout-restarted.)
+        has_digest = "@sha256:" in new_image
+        if not has_digest and kind != "Pod":
+            tag = new_image.rsplit(":", 1)[-1]
+            if tag in _FIXED_TAGS:
+                logger.info(f"Fixed tag '{tag}' without digest — forcing rollout restart")
+                _rollout_restart(apps_v1, namespace, kind, workload_name)
 
         return True, ""
     except Exception as e:

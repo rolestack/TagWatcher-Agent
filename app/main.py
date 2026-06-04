@@ -7,7 +7,7 @@ import httpx
 
 from app.config import settings
 from app.runtime_detector import detect_runtime
-from app.log_streamer import push_log_chunks
+from app.log_streamer import push_log_chunks, reset_since
 from app.registration import get_agent_secret
 from app.updater import apply_update
 
@@ -44,8 +44,9 @@ def _apply_and_record(container_id: str, new_image: str, container_name: str, ru
         })
 
 
-def _log_stream_worker(agent_secret: str, container_ids: list[str]) -> None:
+def _log_stream_worker(agent_secret: str, container_ids: list[str], runtime_type: str) -> None:
     """Push log chunks to TagWatcher every 5 s for up to 10 minutes."""
+    reset_since(container_ids)
     with _active_log_streams_lock:
         _active_log_streams.update(container_ids)
     try:
@@ -54,11 +55,12 @@ def _log_stream_worker(agent_secret: str, container_ids: list[str]) -> None:
                 active = [cid for cid in container_ids if cid in _active_log_streams]
             if not active:
                 break
-            push_log_chunks(agent_secret, active)
+            push_log_chunks(agent_secret, active, runtime_type)
             time.sleep(5)
     finally:
         with _active_log_streams_lock:
             _active_log_streams.difference_update(container_ids)
+        reset_since(container_ids)
 
 
 def _push_sync(agent_secret: str, runtime_type: str, runtime_metadata: str) -> None:
@@ -84,6 +86,7 @@ def _push_sync(agent_secret: str, runtime_type: str, runtime_metadata: str) -> N
         "agent_version": AGENT_VERSION,
         "runtime_type": runtime_type,
         "runtime_metadata": runtime_metadata,
+        "sync_interval_seconds": settings.SYNC_INTERVAL_SECONDS,
         "update_results": flushed_results,
     }
     url = settings.TAGWATCHER_URL.rstrip("/") + "/api/agent/sync"
@@ -110,17 +113,20 @@ def _push_sync(agent_secret: str, runtime_type: str, runtime_metadata: str) -> N
             ).start()
 
         request_logs = data.get("request_logs", [])
-        if request_logs:
-            with _active_log_streams_lock:
-                new_streams = [cid for cid in request_logs if cid not in _active_log_streams]
-            if new_streams:
-                logger.info(f"Starting log stream for {len(new_streams)} container(s)")
-                t = threading.Thread(
-                    target=_log_stream_worker,
-                    args=(agent_secret, new_streams),
-                    daemon=True,
-                )
-                t.start()
+        with _active_log_streams_lock:
+            # Stop streaming containers the server no longer asks for
+            # (browser closed the log view) — the worker loop exits when its
+            # container_ids drop out of _active_log_streams.
+            _active_log_streams.intersection_update(request_logs)
+            new_streams = [cid for cid in request_logs if cid not in _active_log_streams]
+        if new_streams:
+            logger.info(f"Starting log stream for {len(new_streams)} container(s)")
+            t = threading.Thread(
+                target=_log_stream_worker,
+                args=(agent_secret, new_streams, runtime_type),
+                daemon=True,
+            )
+            t.start()
 
     except httpx.HTTPStatusError as e:
         logger.error(f"Sync rejected by TagWatcher ({e.response.status_code}): {e.response.text}")

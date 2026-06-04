@@ -1,8 +1,8 @@
 # TagWatcher Agent
 
-A lightweight agent that runs on a Docker host and pushes container data to [TagWatcher](https://github.com/rolestack/TagWatcher).
+A lightweight agent that runs on a **Docker host or Kubernetes cluster** and pushes container data to [TagWatcher](https://github.com/rolestack/TagWatcher).
 
-Use the agent when you cannot expose the Docker TCP port or mount the Docker socket directly into TagWatcher — for example, on a remote server in a different network.
+The agent **auto-detects** its runtime: on Docker it talks to the Docker socket, in Kubernetes it uses the in-cluster API. No separate image — the same agent handles both.
 
 ## How It Works
 
@@ -12,7 +12,7 @@ TagWatcher (server)              TagWatcher-Agent (remote host)
         |  <── POST /api/agent/sync ────    |  (every 30s)
         |      container list, digests      |
         |                                   |
-        |  ──── pending_updates ──────>     |  apply update (docker compose up -d)
+        |  ──── pending_updates ──────>     |  apply update
         |  ──── request_logs ─────────>     |  stream logs back
         |                                   |
         |  <── POST /api/agent/log-data ─   |  (live log chunks)
@@ -22,15 +22,19 @@ The agent **pushes** data to TagWatcher on a configurable interval. There is no 
 
 ---
 
-## Quick Start
+## Add an Agent Host
 
-### 1. Add an Agent host in TagWatcher
+This step is the same for Docker and Kubernetes.
 
 In the TagWatcher UI, go to a Space → **Hosts** → **Add Host** → select type **Agent**.
 
-Copy the generated **Registration Token**. It is valid for 24 hours and single-use.
+Copy the generated **Registration Token** — you'll pass it to the agent below. It is valid for 24 hours.
 
-### 2. Create the environment file
+---
+
+## Docker
+
+### 1. Configure
 
 ```bash
 cp .env.example .env
@@ -46,17 +50,15 @@ AGENT_HOSTNAME=my-server
 
 `AGENT_HOSTNAME` is the display name shown in TagWatcher. Defaults to the system hostname if not set.
 
-### 3. Start the agent
+### 2. Run
 
 ```bash
 docker compose up -d
 ```
 
-The agent registers with TagWatcher on first startup, discards the registration token, and saves a persistent secret to `/data/agent_secret`. Mount `/data` as a named volume (already in the provided `docker-compose.yml`) so the secret survives container restarts.
+The agent registers on first startup and saves a persistent secret to `/data`. The provided `docker-compose.yml` mounts `/data` as a named volume so the secret survives restarts.
 
----
-
-## docker-compose.yml
+### docker-compose.yml
 
 ```yaml
 services:
@@ -77,6 +79,64 @@ volumes:
 
 ---
 
+## Kubernetes (Helm)
+
+In a cluster the agent discovers pods via the Kubernetes API and applies updates as **rolling updates**. Workload identity (Deployment/StatefulSet/DaemonSet/Pod) is resolved automatically, so it survives pod restarts.
+
+### 1. Add the Helm repository
+
+```bash
+helm repo add tagwatcher https://rolestack.github.io/tagwatcher-agent
+helm repo update
+```
+
+### 2. Create `values.yaml`
+
+```yaml
+tagwatcher:
+  url: https://tagwatcher.example.com
+
+secret:
+  registrationToken: "<registration-token>"
+
+kubernetes:
+  # Scan all namespaces (creates a ClusterRole). Default.
+  clusterWide: true
+
+  # Or restrict to specific namespaces (uses namespace-scoped Roles):
+  # clusterWide: false
+  # namespaces:
+  #   - production
+  #   - staging
+```
+
+See [`values.yaml`](helm/tagwatcher-agent/values.yaml) for all options — timezone, label selector, resources, using an existing Secret, etc.
+
+### 3. Install
+
+```bash
+helm install tagwatcher-agent tagwatcher/tagwatcher-agent \
+  --namespace watcher --create-namespace \
+  -f values.yaml
+```
+
+Apply changes later by editing `values.yaml` and running:
+
+```bash
+helm upgrade tagwatcher-agent tagwatcher/tagwatcher-agent -n watcher -f values.yaml
+```
+
+### RBAC (auto-created)
+
+| Resource | Verbs | Purpose |
+|---|---|---|
+| `pods` | get/list/watch/patch | discovery + bare-Pod image update |
+| `pods/log` | get | live logs |
+| `replicasets` | get/list | trace Pod → Deployment |
+| `deployments`, `statefulsets`, `daemonsets` | get/list/patch | rolling update |
+
+---
+
 ## Environment Variables
 
 | Variable | Default | Required | Description |
@@ -88,6 +148,8 @@ volumes:
 | `DATA_DIR` | `/data` | | Directory for persistent state (`agent_secret`). Mount this as a volume. |
 | `LOG_LEVEL` | `INFO` | | Log level: `DEBUG` / `INFO` / `WARNING` / `ERROR` |
 | `TLS_VERIFY` | `true` | | Set to `false` to skip TLS certificate verification (useful for self-signed certs). |
+
+> On Kubernetes these are set via Helm `values.yaml`, not a `.env` file.
 
 ---
 
@@ -112,7 +174,7 @@ If the agent secret is lost (e.g. volume deleted), go to **Edit Host** in TagWat
 
 ## Apply Update
 
-When you click **Apply Update** in the TagWatcher UI for an agent host:
+When you click **Apply Update** in the TagWatcher UI for a Docker agent host:
 
 1. TagWatcher queues the update internally.
 2. On the next sync, the queue is returned to the agent in `pending_updates`.
@@ -120,6 +182,13 @@ When you click **Apply Update** in the TagWatcher UI for an agent host:
    - **Compose containers:** runs `docker compose up -d --pull always <service>` in the original working directory — all compose settings (devices, volumes, networks, etc.) are preserved.
    - **Standalone containers:** pulls the new image and recreates the container with the same configuration.
 4. The result (success or error) is sent back to TagWatcher on the next sync.
+
+On **Kubernetes** the button is labeled **Rolling Update** and applies via the API:
+
+- **Version tag** (`1.0.0` → `1.1.0`): patches the workload image → controller rolls.
+- **Fixed tag** (`latest`, etc.): the server pins the digest (`repo:tag@sha256:...`) so the spec changes and a rollout is triggered even though the tag name is unchanged.
+- **Bare Pod**: the image is patched in place; kubelet restarts the container.
+- Job/CronJob have no rolling concept, so the update button is hidden for them.
 
 ---
 

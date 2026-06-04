@@ -8,10 +8,19 @@ logger = logging.getLogger(__name__)
 
 
 def _split_image_ref(ref: str) -> tuple[str, str]:
-    if ":" in ref and not ref.startswith("sha256:"):
+    """Split an image reference into (name, tag).
+
+    Strips a pinned digest first ("repo:tag@sha256:..." → "repo:tag") and reads
+    the tag straight from the reference — no "latest" guessing.
+    """
+    if "@" in ref:
+        ref = ref.split("@", 1)[0]
+    if ref.startswith("sha256:"):
+        return ref, ""
+    if ":" in ref:
         name, tag = ref.rsplit(":", 1)
         return name, tag
-    return ref, "latest"
+    return ref, ""
 
 
 def _extract_digest(image_attrs: dict) -> str | None:

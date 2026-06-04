@@ -26,14 +26,8 @@ spec:
             - name: REGISTRATION_TOKEN
               valueFrom:
                 secretKeyRef:
-                  name: {{ include "tagwatcher-agent.name" . }}
+                  name: {{ include "tagwatcher-agent.secretName" . }}
                   key: registrationToken
-                  optional: true
-            - name: AGENT_SECRET
-              valueFrom:
-                secretKeyRef:
-                  name: {{ include "tagwatcher-agent.name" . }}
-                  key: agentSecret
                   optional: true
             - name: SYNC_INTERVAL_SECONDS
               value: {{ .Values.tagwatcher.syncIntervalSeconds | quote }}
@@ -41,11 +35,15 @@ spec:
               value: {{ .Values.tagwatcher.logLevel | quote }}
             - name: TLS_VERIFY
               value: {{ .Values.tagwatcher.tlsVerify | quote }}
+            {{- if .Values.tagwatcher.timezone }}
+            - name: TZ
+              value: {{ .Values.tagwatcher.timezone | quote }}
+            {{- end }}
             - name: K8S_CLUSTER_WIDE
               value: {{ .Values.kubernetes.clusterWide | quote }}
-            {{- if .Values.kubernetes.namespace }}
-            - name: K8S_NAMESPACE
-              value: {{ .Values.kubernetes.namespace | quote }}
+            {{- if .Values.kubernetes.namespaces }}
+            - name: K8S_NAMESPACES
+              value: {{ .Values.kubernetes.namespaces | join "," | quote }}
             {{- end }}
             {{- if .Values.kubernetes.labelSelector }}
             - name: K8S_LABEL_SELECTOR

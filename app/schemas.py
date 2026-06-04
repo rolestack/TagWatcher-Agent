@@ -5,6 +5,7 @@ from pydantic import BaseModel
 class ContainerInfo(BaseModel):
     container_id: str
     name: str
+    namespace: str = ""
     image: str
     tag: str
     digest: Optional[str] = None

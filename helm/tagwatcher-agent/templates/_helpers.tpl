@@ -20,8 +20,8 @@
 
 {{- define "tagwatcher-agent.secretName" -}}
 {{- if .Values.secret.create }}
-{{- required "secret.name is required when secret.create=true" .Values.secret.name }}
-{{- else }}
 {{- include "tagwatcher-agent.name" . }}
+{{- else }}
+{{- required "secret.name is required when secret.create=false" .Values.secret.name }}
 {{- end }}
 {{- end }}
