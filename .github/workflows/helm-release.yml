@@ -12,26 +12,36 @@ jobs:
   release:
     runs-on: ubuntu-latest
     permissions:
-      contents: read
-      packages: write
+      contents: write
 
     steps:
-      - name: Checkout
+      - name: Checkout main
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Install Helm
         uses: azure/setup-helm@v4
-
-      - name: Log in to GHCR
-        run: |
-          echo "${{ secrets.GITHUB_TOKEN }}" | helm registry login ghcr.io \
-            --username ${{ github.actor }} \
-            --password-stdin
 
       - name: Package chart
         run: |
           helm package helm/tagwatcher-agent/ --destination .chart-output/
 
-      - name: Push chart to GHCR
+      - name: Checkout gh-pages branch
+        uses: actions/checkout@v4
+        with:
+          ref: gh-pages
+          path: gh-pages
+
+      - name: Update index and push to gh-pages
         run: |
-          helm push .chart-output/*.tgz oci://ghcr.io/${{ github.repository_owner }}
+          cp .chart-output/*.tgz gh-pages/
+          helm repo index gh-pages/ \
+            --url https://rolestack.github.io/TagWatcher-Agent \
+            --merge gh-pages/index.yaml
+          cd gh-pages
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add .
+          git diff --cached --quiet || git commit -m "chore: release $(ls ../.chart-output/*.tgz | xargs basename)"
+          git push

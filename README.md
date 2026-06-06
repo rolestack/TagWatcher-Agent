@@ -86,7 +86,7 @@ In a cluster the agent discovers pods via the Kubernetes API and applies updates
 ### 1. Add the Helm repository
 
 ```bash
-helm repo add tagwatcher https://rolestack.github.io/tagwatcher-agent
+helm repo add tagwatcher https://rolestack.github.io/Tagwatcher-Agent
 helm repo update
 ```
 
