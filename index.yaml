@@ -3,12 +3,12 @@ entries:
   tagwatcher-agent:
   - apiVersion: v2
     appVersion: 2026.06.04
-    created: "2026-06-06T07:49:21.629097805Z"
+    created: "2026-06-06T07:52:43.059035586Z"
     description: TagWatcher Agent for Kubernetes container monitoring
-    digest: fc1e425fa20db2ffd3249d0b7b41ed3579660564557cc23cd36740ef92466439
+    digest: 472b8559ef84615125e7543f986cbe1e139b4d1d9f566782be49d9dde839747c
     name: tagwatcher-agent
     type: application
     urls:
     - https://rolestack.github.io/TagWatcher-Agent/tagwatcher-agent-2026.06.04.tgz
     version: 2026.06.04
-generated: "2026-06-06T07:49:21.628645842Z"
+generated: "2026-06-06T07:52:43.058562715Z"
