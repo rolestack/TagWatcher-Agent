@@ -3,7 +3,7 @@ image:
   repository: ghcr.io/rolestack/tagwatcher-agent
   pullPolicy: Always
   # Override the image tag (defaults to "latest")
-  tag: "feature-kubernetes"
+  tag: "latest"
 
 # -- TagWatcher server connection settings
 tagwatcher:
